@@ -5,7 +5,6 @@ from urllib.request import urlopen
 
 from flask import Flask, render_template, request, redirect, url_for
 import platform
-import requests
 import os  # Import the os module.
 from datetime import datetime
 

@@ -20,8 +20,6 @@ from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-SITE = 'https://www.calbot.azurewebsites.net/'
-# SITE = 'http://127.0.0.1:5000/'
 
 app = Flask(__name__)
 app.secret_key = 'abraka dabra test'
@@ -45,6 +43,9 @@ def oauth2callback():
     flow.redirect_uri = url_for('oauth2callback', _external=True)
 
     authorization_response = request.url
+    if authorization_response.startswith('http:'):
+        authorization_response = 'https:' + authorization_response[5:]
+    print(authorization_response)
     flow.fetch_token(authorization_response=authorization_response)
 
     # Store the credentials in the session.
@@ -52,7 +53,7 @@ def oauth2callback():
     #     Store user's access and refresh tokens in your data store if
     #     incorporating this code into your real app.
     credentials = flow.credentials
-    print(credentials)
+    print(str(credentials.to_json()))
     return "OAuth2 done"
 
 
@@ -83,7 +84,6 @@ def connect_discord(discord_id: str):
                     flow = InstalledAppFlow.from_client_secrets_file(get_calendar_directory(file='credentials.json'),
                                                                      SCOPES)
                     flow.redirect_uri = url_for('oauth2callback', _external=True)
-                    # flow.redirect_uri = str(SITE) + 'oauth2callback/'
                     print("Starting")
                     # Generate URL for request to Google's OAuth 2.0 server.
                     # Use kwargs to set optional request parameters.

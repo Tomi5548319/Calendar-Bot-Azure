@@ -3,7 +3,7 @@
 from __future__ import print_function
 from urllib.request import urlopen
 
-from flask import Flask, render_template, request, redirect, url_for
+from flask import Flask, render_template, request, redirect, url_for, session
 import platform
 import os  # Import the os module.
 from datetime import datetime
@@ -14,83 +14,17 @@ from dotenv import dotenv_values
 # pip install google
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
+from google_auth_oauthlib.flow import InstalledAppFlow, Flow
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
 SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
-
-
-def connect(discord_id: int) -> bool:
-    """Connects a google account to discord_id
-    """
-    if discord_id is None:
-        return False
-
-    creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first
-    # time.
-    if os.path.exists(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json')):
-        creds = Credentials.from_authorized_user_file(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), SCOPES)
-    # If there are no (valid) credentials available, let the user log in.
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            try:
-                flow = InstalledAppFlow.from_client_secrets_file(
-                    get_calendar_directory(file='credentials.json'), SCOPES)
-                creds = flow.run_local_server(port=0)
-            except FileNotFoundError:
-                print("No file credentials.json found")
-                return False
-        # Save the credentials for the next run
-        with open(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), 'w') as token:
-            token.write(creds.to_json())
-
-    try:
-        service = build('calendar', 'v3', credentials=creds)
-
-        # Call the Calendar API
-        now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
-        print('Getting the upcoming 10 events')
-        events_result = service.events().list(calendarId='primary', timeMin=now,
-                                              maxResults=10, singleEvents=True,
-                                              orderBy='startTime').execute()
-        events = events_result.get('items', [])
-
-        if not events:
-            print('No upcoming events found.')
-            return True
-
-        # Prints the start and name of the next 10 events
-        for event in events:
-            start = event['start'].get('dateTime', event['start'].get('date'))
-            print(start, event['summary'])
-
-    except HttpError as error:
-        print('An error occurred: %s' % error)
-        return False
-    return True
-
-
-def disconnect(discord_id: int) -> bool:
-    """Disconnects a google account from discord_id
-    """
-    if discord_id is None:
-        return False
-
-    file_route = get_calendar_directory(folder='tokens', file=str(discord_id) + '.json')
-
-    if os.path.exists(file_route):
-        os.remove(file_route)
-        return True
-    return False
-
+SITE = 'https://www.calbot.azurewebsites.net/'
+# SITE = 'http://127.0.0.1:5000/'
 
 app = Flask(__name__)
+app.secret_key = 'abraka dabra test'
 # TODO create credentials file in home
 # TODO create .env file in home (password)
 
@@ -100,13 +34,78 @@ def index():
     return "Site is up!"
 
 
+@app.route('/oauth2callback/', methods=['GET'])
+def oauth2callback():
+    print("OAuth2 done")
+    state = session['state']
+    flow = Flow.from_client_secrets_file(
+        get_calendar_directory(file='credentials.json'),
+        scopes=SCOPES,
+        state=state)
+    flow.redirect_uri = url_for('oauth2callback', _external=True)
+
+    authorization_response = request.url
+    flow.fetch_token(authorization_response=authorization_response)
+
+    # Store the credentials in the session.
+    # ACTION ITEM for developers:
+    #     Store user's access and refresh tokens in your data store if
+    #     incorporating this code into your real app.
+    credentials = flow.credentials
+    print(credentials)
+    return "OAuth2 done"
+
+
 @app.route('/connect/<string:discord_id>/', methods=['GET'])
 def connect_discord(discord_id: str):
     try:
         int_discord_id = int(discord_id)
 
-        if connect(int_discord_id):
-            return "connected"
+        """Connects a google account to discord_id
+            """
+        print("Here")
+        if discord_id is None:
+            return False
+
+        creds = None
+        # The file token.json stores the user's access and refresh tokens, and is
+        # created automatically when the authorization flow completes for the first
+        # time.
+        if os.path.exists(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json')):
+            creds = Credentials.from_authorized_user_file(
+                get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), SCOPES)
+        # If there are no (valid) credentials available, let the user log in.
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
+            else:
+                try:
+                    flow = InstalledAppFlow.from_client_secrets_file(get_calendar_directory(file='credentials.json'),
+                                                                     SCOPES)
+                    flow.redirect_uri = url_for('oauth2callback', _external=True)
+                    # flow.redirect_uri = str(SITE) + 'oauth2callback/'
+                    print("Starting")
+                    # Generate URL for request to Google's OAuth 2.0 server.
+                    # Use kwargs to set optional request parameters.
+                    authorization_url, state = flow.authorization_url(
+                        # Enable offline access so that you can refresh an access token without
+                        # re-prompting the user for permission. Recommended for web server apps.
+                        access_type='offline',
+                        # Enable incremental authorization. Recommended as a best practice.
+                        include_granted_scopes='true')
+
+                    # Store the state so the callback can verify the auth server response.
+                    session['state'] = state
+
+                    return redirect(authorization_url)
+                    # print(response)
+                except FileNotFoundError:
+                    print("No file credentials.json found")
+                    return False
+            # Save the credentials for the next run
+            if creds is not None:
+                with open(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), 'w') as token:
+                    token.write(creds.to_json())
     except ValueError:
         return "\"" + str(discord_id) + "\" is not a number"
     return "error occured"
@@ -167,4 +166,48 @@ def access_granted(password: str) -> bool:
 
 
 if __name__ == '__main__':
+    # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     app.run()
+
+
+def connect(discord_id: int) -> bool:
+
+
+    # try:
+    #     service = build('calendar', 'v3', credentials=creds)
+    #
+    #     # Call the Calendar API
+    #     now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
+    #     print('Getting the upcoming 10 events')
+    #     events_result = service.events().list(calendarId='primary', timeMin=now,
+    #                                           maxResults=10, singleEvents=True,
+    #                                           orderBy='startTime').execute()
+    #     events = events_result.get('items', [])
+    #
+    #     if not events:
+    #         print('No upcoming events found.')
+    #         return True
+    #
+    #     # Prints the start and name of the next 10 events
+    #     for event in events:
+    #         start = event['start'].get('dateTime', event['start'].get('date'))
+    #         print(start, event['summary'])
+    #
+    # except HttpError as error:
+    #     print('An error occurred: %s' % error)
+    #     return False
+    return True
+
+
+def disconnect(discord_id: int) -> bool:
+    """Disconnects a google account from discord_id
+    """
+    if discord_id is None:
+        return False
+
+    file_route = get_calendar_directory(folder='tokens', file=str(discord_id) + '.json')
+
+    if os.path.exists(file_route):
+        os.remove(file_route)
+        return True
+    return False

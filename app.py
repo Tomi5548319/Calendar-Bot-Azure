@@ -95,6 +95,11 @@ app = Flask(__name__)
 # TODO create .env file in home (password)
 
 
+@app.route('/', methods=['GET'])
+def index():
+    return "Site is up!"
+
+
 @app.route('/connect/<string:discord_id>/', methods=['GET'])
 def connect_discord(discord_id: str):
     try:

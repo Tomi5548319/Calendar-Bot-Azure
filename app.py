@@ -3,6 +3,7 @@
 from __future__ import print_function
 from urllib.request import urlopen
 
+import requests
 from flask import Flask, render_template, request, redirect, url_for, session
 import platform
 import os  # Import the os module.
@@ -20,7 +21,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 # If modifying these scopes, delete the file token.json.
-SCOPES = ['https://www.googleapis.com/auth/calendar.readonly']
+SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 app = Flask(__name__)
 app.secret_key = 'abraka dabra test'
@@ -287,6 +288,12 @@ def disconnect(discord_id: int) -> bool:
     file_route = get_calendar_directory(folder='tokens', file=str(discord_id) + '.json')
 
     if os.path.exists(file_route):
-        os.remove(file_route)
-        return True
+        creds = get_credentials(discord_id)
+        if creds is not None:
+            requests.post('https://oauth2.googleapis.com/revoke',
+                          params={'token': creds.token},
+                          headers={'content-type': 'application/x-www-form-urlencoded'})
+
+            os.remove(file_route)
+            return True
     return False

@@ -25,7 +25,7 @@ SCOPES = ['https://www.googleapis.com/auth/calendar']
 
 app = Flask(__name__)
 app.secret_key = 'abraka dabra test'
-# TODO create credentials file in home
+# TODO create credentials.json file in home
 # TODO create .env file in home (password)
 
 
@@ -39,6 +39,10 @@ def oauth2callback():
     try:
         state = session['state']
         discord_id = int(session['dc_id'])
+        auth_token = session['auth_token']
+
+        if os.path.exists(get_calendar_directory(folder="incoming_connections", file=str(auth_token) + '.json')):
+            os.remove(get_calendar_directory(folder="incoming_connections", file=str(auth_token) + '.json'))
 
         flow = Flow.from_client_secrets_file(
             get_calendar_directory(file='credentials.json'),
@@ -86,7 +90,6 @@ def connect_discord(auth_token: str):
             expiry = parser.parse(connection['expiry'])
             now = parser.parse(datetime.utcnow().isoformat() + 'Z')
 
-        os.remove(get_calendar_directory(folder="incoming_connections", file=str(auth_token) + '.json'))
         if expiry < now:
             return "Link expired, please generate a new one"
 
@@ -98,7 +101,7 @@ def connect_discord(auth_token: str):
         if creds is not None:
             return "You are already connected"
 
-        return create_credentials(int_discord_id)
+        return create_credentials(int_discord_id, auth_token)
     return "Link expired, please generate a new one"
 
 
@@ -239,7 +242,7 @@ def event_now():
     return "error occured"
 
 
-def create_credentials(discord_id: int):
+def create_credentials(discord_id: int, auth_token: str):
     try:
         flow = InstalledAppFlow.from_client_secrets_file(get_calendar_directory(file='credentials.json'),
                                                          SCOPES)
@@ -256,6 +259,7 @@ def create_credentials(discord_id: int):
         # Store the state so the callback can verify the auth server response.
         session['state'] = state
         session['dc_id'] = str(discord_id)
+        session['auth_token'] = str(auth_token)
 
         return redirect(authorization_url)
         # print(response)
@@ -321,34 +325,6 @@ def access_granted(password: str) -> bool:
 if __name__ == '__main__':
     # os.environ['OAUTHLIB_INSECURE_TRANSPORT'] = '1'
     app.run()
-
-
-def connect() -> bool:
-
-    # try:
-    #     service = build('calendar', 'v3', credentials=creds)
-    #
-    #     # Call the Calendar API
-    #     now = datetime.datetime.utcnow().isoformat() + 'Z'  # 'Z' indicates UTC time
-    #     print('Getting the upcoming 10 events')
-    #     events_result = service.events().list(calendarId='primary', timeMin=now,
-    #                                           maxResults=10, singleEvents=True,
-    #                                           orderBy='startTime').execute()
-    #     events = events_result.get('items', [])
-    #
-    #     if not events:
-    #         print('No upcoming events found.')
-    #         return True
-    #
-    #     # Prints the start and name of the next 10 events
-    #     for event in events:
-    #         start = event['start'].get('dateTime', event['start'].get('date'))
-    #         print(start, event['summary'])
-    #
-    # except HttpError as error:
-    #     print('An error occurred: %s' % error)
-    #     return False
-    return True
 
 
 def disconnect(discord_id: int) -> bool:

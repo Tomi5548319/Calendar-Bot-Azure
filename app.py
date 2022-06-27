@@ -182,8 +182,8 @@ def event_now():
             if creds is None:
                 return "No credentials"
 
-            with open(get_calendar_directory(folder="events", file=str(dc_id) + '.json', create_file=True, file_default_content='[]'), "r+") as f:
-                events = json.load(f)
+            with open(get_calendar_directory(folder="events", file=str(dc_id) + '.json', create_file=True, file_default_content='{"events":[]}'), "r+") as f:
+                events = json.load(f)['events']
                 event = {
                     'summary': event_summary,
                     'start': {
@@ -194,7 +194,7 @@ def event_now():
                 # Add the event and save it, just in case an error occures later
                 events.append(event)
                 f.seek(0)
-                f.write(json.dumps(events))
+                f.write('{"events":' + json.dumps(events) + '}')
 
                 page_token = None
                 calendar = None
@@ -229,7 +229,7 @@ def event_now():
                         service.events().insert(calendarId=calendar['id'], body=cal_event).execute()
 
                     f.seek(0)
-                    f.write(json.dumps([event]))
+                    f.write('{"events":[' + json.dumps(event) + ']}')
 
                     return "Success"
                 else:
@@ -237,6 +237,7 @@ def event_now():
         else:
             return "Incorrect password"
     except Exception as e:
+        # traceback.print_exc()
         print(str(e))
 
     return "error occured"

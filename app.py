@@ -36,32 +36,37 @@ def index():
 
 @app.route('/oauth2callback/', methods=['GET'])
 def oauth2callback():
-    state = session['state']
-    discord_id = int(session['dc_id'])
+    try:
+        state = session['state']
+        discord_id = int(session['dc_id'])
 
-    flow = Flow.from_client_secrets_file(
-        get_calendar_directory(file='credentials.json'),
-        scopes=SCOPES,
-        state=state)
-    flow.redirect_uri = url_for('oauth2callback', _external=True)
+        flow = Flow.from_client_secrets_file(
+            get_calendar_directory(file='credentials.json'),
+            scopes=SCOPES,
+            state=state)
+        flow.redirect_uri = url_for('oauth2callback', _external=True)
 
-    authorization_response = request.url
-    if authorization_response.startswith('http:'):
-        authorization_response = 'https:' + authorization_response[5:]
-    flow.fetch_token(authorization_response=authorization_response)
+        authorization_response = request.url
+        if authorization_response.startswith('http:'):
+            authorization_response = 'https:' + authorization_response[5:]
+        flow.fetch_token(authorization_response=authorization_response)
 
-    # Store the credentials in the session.
-    # ACTION ITEM for developers:
-    #     Store user's access and refresh tokens in your data store if
-    #     incorporating this code into your real app.
-    credentials = flow.credentials
+        # Store the credentials in the session.
+        # ACTION ITEM for developers:
+        #     Store user's access and refresh tokens in your data store if
+        #     incorporating this code into your real app.
+        credentials = flow.credentials
 
-    # Save the credentials for the next run
-    if credentials is not None:
-        with open(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), 'w') as token:
-            token.write(credentials.to_json())
+        # Save the credentials for the next run
+        if credentials is not None:
+            with open(get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), 'w') as token:
+                token.write(credentials.to_json())
 
-    return "You have successfully connected your google account to the Google Calendar Bot, you may close this window."
+        return "You have successfully connected your google account to the Google Calendar Bot, you may close this window."
+    except Warning as w:
+        print(str(w))
+
+    return ""
 
 
 @app.route('/connect/<string:auth_token>/', methods=['GET'])
@@ -76,14 +81,10 @@ def connect_discord(auth_token: str):
 
         with open(get_calendar_directory(folder="incoming_connections", file=str(auth_token)+'.json'), 'r') as f:
             connection = json.load(f)
-            print(connection['dc_id'])
 
             int_discord_id = int(connection['dc_id'])
             expiry = parser.parse(connection['expiry'])
             now = parser.parse(datetime.utcnow().isoformat() + 'Z')
-
-            print(str(expiry))
-            print(str(now))
 
         os.remove(get_calendar_directory(folder="incoming_connections", file=str(auth_token) + '.json'))
         if expiry < now:
@@ -92,14 +93,12 @@ def connect_discord(auth_token: str):
         # The file token.json stores the user's access and refresh tokens, and is
         # created automatically when the authorization flow completes for the first
         # time.
-        if is_connected(int_discord_id):
-            return "You are already connected"
-        else:
-            creds = get_credentials(int_discord_id)
-            if creds is not None:
-                return "You are already connected"
 
-            return create_credentials(int_discord_id)
+        creds = get_credentials(int_discord_id)
+        if creds is not None:
+            return "You are already connected"
+
+        return create_credentials(int_discord_id)
     return "Link expired, please generate a new one"
 
 
@@ -117,7 +116,7 @@ def disconnect_discord():
             else:
                 return "Not connected"
         else:
-            print("Incorrect password")
+            return "Incorrect password"
     except Exception as e:
         print(str(e))
 
@@ -157,7 +156,7 @@ def is_connected_dc():
         dc_id = int(data['discord_id'])
 
         if access_granted(password):
-            return str(is_connected(dc_id))
+            return str(get_credentials(dc_id) is not None)
 
         else:
             return "Incorrect password"
@@ -167,8 +166,77 @@ def is_connected_dc():
     return "error occured"
 
 
-def is_connected(dc_id: int):
-    return os.path.exists(get_calendar_directory(folder='tokens', file=str(dc_id) + '.json'))
+@app.route('/now/', methods=['POST'])
+def event_now():
+    try:
+        data = request.get_json()
+        password = data['password']
+        dc_id = int(data['discord_id'])
+        event_summary = data['summary']
+
+        if access_granted(password):
+            creds = get_credentials(dc_id)
+            if creds is None:
+                return "No credentials"
+
+            with open(get_calendar_directory(folder="events", file=str(dc_id) + '.json', create_file=True, file_default_content='[]'), "r+") as f:
+                events = json.load(f)
+                event = {
+                    'summary': event_summary,
+                    'start': {
+                        'dateTime': datetime.utcnow().isoformat() + 'Z'
+                    }
+                }
+
+                # Add the event and save it, just in case an error occures later
+                events.append(event)
+                f.seek(0)
+                f.write(json.dumps(events))
+
+                page_token = None
+                calendar = None
+                cal_summary = 'Diary (BOT)'
+
+                service = build('calendar', 'v3', credentials=creds)
+                while True:
+                    calendar_list = service.calendarList().list(pageToken=page_token, minAccessRole='owner').execute()
+                    page_token = calendar_list.get('nextPageToken')
+
+                    for calendar_list_entry in calendar_list['items']:
+                        if calendar_list_entry['summary'] == cal_summary:
+                            calendar = calendar_list_entry
+                            page_token = None
+                            break
+
+                    if not page_token:
+                        break
+
+                if calendar is None:
+                    calendar = service.calendars().insert(body={'summary': cal_summary}).execute()
+
+                if calendar is not None:
+                    for event_id, curr_event in enumerate(events[:-1]):
+                        # print(str(event['summary']) + ': ' + str(event['start']['dateTime']) + '-' + str(events[event_id + 1]['start']['dateTime']))
+                        cal_event = {
+                            'summary': curr_event['summary'],
+                            'start': curr_event['start'],
+                            'end': events[event_id + 1]['start']
+                        }
+
+                        service.events().insert(calendarId=calendar['id'], body=cal_event).execute()
+
+                    f.seek(0)
+                    f.write(json.dumps([event]))
+
+                    return "Success"
+                else:
+                    return "Unable to connect to calendar"
+        else:
+            return "Incorrect password"
+    except Exception as e:
+        print(str(e))
+
+    return "error occured"
 
 
 def create_credentials(discord_id: int):
@@ -183,7 +251,7 @@ def create_credentials(discord_id: int):
             # re-prompting the user for permission. Recommended for web server apps.
             access_type='offline',
             # Enable incremental authorization. Recommended as a best practice.
-            include_granted_scopes='true')
+            include_granted_scopes='false')
 
         # Store the state so the callback can verify the auth server response.
         session['state'] = state
@@ -196,9 +264,13 @@ def create_credentials(discord_id: int):
         return False
 
 
+def token_exists(dc_id: int):
+    return os.path.exists(get_calendar_directory(folder='tokens', file=str(dc_id) + '.json'))
+
+
 def get_credentials(discord_id: int):
     creds = None
-    if is_connected(discord_id):
+    if token_exists(discord_id):
         creds = Credentials.from_authorized_user_file(
                 get_calendar_directory(folder='tokens', file=str(discord_id) + '.json'), SCOPES)
     # If there are no (valid) credentials available, let the user log in.
